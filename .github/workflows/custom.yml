@@ -1,19 +1,20 @@
-name: Node.js daily build job
+name: Node.js custom build job
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: 0 0 * * *
+    inputs:
+      version:
+        description: 'Node.js version'
+        required: true
+        default: 'v22.9.0'
+      latest_version:
+        description: 'Latest'
+        required: true
+        default: 'false'
 
 jobs:
-  build-daily:
+  build-custom:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        name: ['node']
-        # version: ['18', '20', '22']
-        version: ['18', '20']
-        latest_version: ['20']
 
     steps:
       - uses: jlumbroso/free-disk-space@main
@@ -28,13 +29,9 @@ jobs:
 
       - name: Check version
         run: |
-          version=$(curl -s https://nodejs.org/download/release/index.json | jq -r '.[] | .version' | grep -E '^v'"${{ matrix.version }}" | head -n 1)
-          if [ -z "${version}" ]; then
-            echo "Node.js version not found"
-            exit 1
-          fi
-          echo "version=${version}" >> $GITHUB_ENV
-          echo "Node.js current version: ${version}"
+          echo "version=${{ github.event.inputs.version }}" >> $GITHUB_ENV
+          echo "latest_version=${{ github.event.inputs.latest_version }}" >> $GITHUB_ENV
+          echo "Node.js current version: ${version}, latest: ${latest_version}"
 
       - name: Check release
         run: |
@@ -63,20 +60,10 @@ jobs:
       - uses: docker/setup-buildx-action@v3
         if: env.create == '1'
 
-      - name: Cache node.js
-        if: env.create == '1'
-        uses: actions/cache@v4
-        with:
-          path: /tmp/.buildx-cache
-          key: ${{ matrix.name }}-buildx-${{ matrix.version }}-${{ github.sha }}
-          restore-keys: |
-            ${{ matrix.name }}-buildx-${{ matrix.version }}-
-
       - name: Set permissions
         if: env.create == '1'
         run: |
-          mkdir -p /tmp/.buildx-cache
-          mv /tmp/.buildx-cache ${{ github.workspace }}/workdir
+          mkdir -p ${{ github.workspace }}/workdir
           sudo chmod -R 777 ${{ github.workspace }}/workdir
           sudo chown -R 1000:docker ${{ github.workspace }}/workdir
 
@@ -90,16 +77,9 @@ jobs:
         if: env.create == '1'
         run: |
           latestFlag=""
-          majorVersion=$(echo ${{ env.version }} | cut -d . -f 1 | tr --delete v)
-          if [ "${majorVersion}" != "${{ matrix.latest_version }}" ]; then
+          if [ "${{ env.latest_version }}" != "true" ]; then
             latestFlag="--latest=false"
           fi
           gh release create ${{ env.version }} -R ${{ github.repository }} ${{ github.workspace }}/workdir/staging/release/${{ env.version }}/* ${{ github.workspace }}/workdir/staging/src/${{ env.version }}/* ${latestFlag}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Move cache
-        if: env.create == '1'
-        run: |
-          rm -rf ${{ github.workspace }}/workdir/staging
-          mv ${{ github.workspace }}/workdir /tmp/.buildx-cache
