@@ -1,0 +1,100 @@
+name: Node.js daily build job
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: 0 0 * * *
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        name: ['node']
+        # version: ['18', '20', '22']
+        version: ['18', '20']
+
+    steps:
+      - uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: false
+          docker-images: false
+          swap-storage: false
+
+      - name: Check version
+        run: |
+          version=$(curl -s https://nodejs.org/download/release/index.json | jq -r '.[] | .version' | grep -E '^v'"${{ matrix.version }}" | head -n 1)
+          if [ -z "${version}" ]; then
+            echo "Node.js version not found"
+            exit 1
+          fi
+          echo "version=$version" >> $GITHUB_ENV
+          echo "Node.js current version: $version"
+          echo "Run: $(id), Need: $(id 1000)"
+
+      - name: Check release
+        run: |
+          gh release view ${{ env.version }} -R ${{ github.repository }} | grep node-*.tar.gz >/dev/null 2>&1 || echo "create=1" >> $GITHUB_ENV
+
+      - uses: actions/checkout@v4
+        if: env.create == '1'
+        with:
+          path: main
+
+      - name: Create tag
+        if: env.create == '1'
+        run: |
+          git config --global user.name "${{ github.actor }}"
+          git config --global user.email "${{ github.actor }}@users.noreply.github.com"
+          git tag ${{ env.version }}
+          git push origin ${{ env.version }} --force
+        working-directory: main
+
+      - uses: actions/checkout@v4
+        if: env.create == '1'
+        with:
+          repository: loong64/unofficial-builds
+          path: unofficial-builds
+
+      - uses: docker/setup-buildx-action@v3
+        if: env.create == '1'
+
+      - name: Cache node.js
+        if: env.create == '1'
+        uses: actions/cache@v4
+        with:
+          path: /tmp/.buildx-cache
+          key: ${{ matrix.name }}-buildx-${{ matrix.version }}-${{ github.sha }}
+          restore-keys: |
+            ${{ matrix.name }}-buildx-${{ matrix.version }}-
+
+      - name: Set permissions
+        if: env.create == '1'
+        run: |
+          mkdir -p /tmp/.buildx-cache
+          mv /tmp/.buildx-cache ${{ github.workspace }}/workdir
+          sudo chmod -R 777 ${{ github.workspace }}/workdir
+          sudo chown -R 1000:docker ${{ github.workspace }}/workdir
+
+      - name: Build node.js
+        if: env.create == '1'
+        run: |
+          ./bin/local_build.sh -r loong64 -v ${{ env.version }} -w ${{ github.workspace }}/workdir
+        working-directory: unofficial-builds
+
+      - name: Create release
+        if: env.create == '1'
+        run: |
+          gh release create ${{ env.version }} -R ${{ github.repository }} ${{ github.workspace }}/workdir/staging/release/${{ env.version }}/* ${{ github.workspace }}/workdir/staging/src/${{ env.version }}/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Move cache
+        if: env.create == '1'
+        run: |
+          rm -rf ${{ github.workspace }}/workdir/staging
+          mv ${{ github.workspace }}/workdir /tmp/.buildx-cache
