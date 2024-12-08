@@ -96,7 +96,8 @@ jobs:
           if [ "${majorVersion}" != "${{ matrix.latest_version }}" ]; then
             latestFlag="--latest=false"
           fi
-          gh release create ${{ env.version }} -R ${{ github.repository }} ${{ github.workspace }}/workdir/staging/release/${{ env.version }}/* ${{ github.workspace }}/workdir/staging/src/${{ env.version }}/* ${latestFlag}
+          gh release create ${{ env.version }} -R ${{ github.repository }} --title ${{ env.version }} --notes "**Full Changelog**: [${{ env.version }}](https://github.com/nodejs/node/releases/tag/${{ env.version }})" ${latestFlag}
+          gh release upload ${{ env.version }} -R ${{ github.repository }} ${{ github.workspace }}/workdir/staging/release/${{ env.version }}/* ${{ github.workspace }}/workdir/staging/src/${{ env.version }}/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
