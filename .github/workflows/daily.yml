@@ -11,21 +11,11 @@ jobs:
     strategy:
       matrix:
         name: ['node']
-        # version: ['18', '20', '22']
-        version: ['18', '20']
-        latest_version: ['20']
+        binaries: ['glibc', 'musl']
+        version: ['18', '20', '22', '23' ]
+        latest_version: ['23']
 
     steps:
-      - uses: jlumbroso/free-disk-space@main
-        with:
-          tool-cache: false
-          android: true
-          dotnet: true
-          haskell: true
-          large-packages: false
-          docker-images: false
-          swap-storage: false
-
       - name: Check version
         run: |
           version=$(curl -s https://nodejs.org/download/release/index.json | jq -r '.[] | .version' | grep -E '^v'"${{ matrix.version }}" | head -n 1)
@@ -38,7 +28,18 @@ jobs:
 
       - name: Check release
         run: |
-          gh release view ${{ env.version }} -R ${{ github.repository }} | grep node.*.tar.gz >/dev/null 2>&1 || echo "create=1" >> $GITHUB_ENV
+          case ${{ matrix.binaries }} in
+            glibc)
+              if [ "${{ matrix.version }}" -gt "20" ]; then
+                # https://github.com/nodejs/node/pull/52888
+                exit 0
+              fi
+              gh release view ${{ env.version }} -R ${{ github.repository }} | grep node-${{ env.version }}-linux-loong64.tar.xz >/dev/null 2>&1 || echo "create=1" >> $GITHUB_ENV
+              ;;
+            musl)
+              gh release view ${{ env.version }} -R ${{ github.repository }} | grep node-${{ env.version }}-linux-loong64-musl.tar.xz >/dev/null 2>&1 || echo "create=1" >> $GITHUB_ENV
+              ;;
+          esac
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -50,8 +51,8 @@ jobs:
       - name: Create tag
         if: env.create == '1'
         run: |
-          git config --global user.name "${{ github.actor }}"
-          git config --global user.email "${{ github.actor }}@users.noreply.github.com"
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git tag ${{ env.version }}
           git push origin ${{ env.version }} --force
         working-directory: main
@@ -65,14 +66,19 @@ jobs:
       - uses: docker/setup-buildx-action@v3
         if: env.create == '1'
 
+      - name: Setup QEMU
+        if: env.create == '1'
+        run: |
+          docker run --rm --privileged ghcr.io/loong64/qemu-user-static --reset -p yes
+
       - name: Cache node.js
         if: env.create == '1'
         uses: actions/cache@v4
         with:
           path: /tmp/.buildx-cache
-          key: ${{ matrix.name }}-buildx-${{ matrix.version }}-${{ github.sha }}
+          key: ${{ matrix.name }}-${{ matrix.binaries }}-${{ matrix.version }}-${{ github.sha }}
           restore-keys: |
-            ${{ matrix.name }}-buildx-${{ matrix.version }}-
+            ${{ matrix.name }}-${{ matrix.binaries }}-${{ matrix.version }}-
 
       - name: Set permissions
         if: env.create == '1'
@@ -85,7 +91,20 @@ jobs:
       - name: Build node.js
         if: env.create == '1'
         run: |
-          ./bin/local_build.sh -r loong64 -v ${{ env.version }} -w ${{ github.workspace }}/workdir
+          case ${{ matrix.binaries }} in
+            glibc)
+              ./bin/local_build.sh -r loong64 -v ${{ env.version }} -w ${{ github.workspace }}/workdir
+              cd ${{ github.workspace }}/workdir/staging/release/${{ env.version }}
+              sha256sum node-${{ env.version }}-linux-loong64.tar.gz > node-${{ env.version }}-linux-loong64.tar.gz.sha256
+              sha256sum node-${{ env.version }}-linux-loong64.tar.xz > node-${{ env.version }}-linux-loong64.tar.xz.sha256
+              ;;
+            musl)
+              ./bin/local_build.sh -r musl -v ${{ env.version }} -w ${{ github.workspace }}/workdir
+              cd ${{ github.workspace }}/workdir/staging/release/${{ env.version }}
+              sha256sum node-${{ env.version }}-linux-loong64-musl.tar.gz > node-${{ env.version }}-linux-loong64-musl.tar.gz.sha256
+              sha256sum node-${{ env.version }}-linux-loong64-musl.tar.xz > node-${{ env.version }}-linux-loong64-musl.tar.xz.sha256
+              ;;
+          esac
         working-directory: unofficial-builds
 
       - name: Create release
