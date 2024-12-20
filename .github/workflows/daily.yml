@@ -26,7 +26,7 @@ jobs:
           echo "version=${version}" >> $GITHUB_ENV
           echo "Node.js current version: ${version}"
 
-          major_version=v${{ matrix.version }}
+          major_version=$(echo ${{ matrix.version }} | sed 's/^v//')
           echo "major_version=${major_version}" >> $GITHUB_ENV
 
       - name: Check release
