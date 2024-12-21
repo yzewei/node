@@ -56,7 +56,7 @@ jobs:
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git tag ${{ env.version }}
+          git tag ${{ env.version }} || true
           git push origin ${{ env.version }} --force
         working-directory: main
 
@@ -72,14 +72,7 @@ jobs:
       - name: Setup QEMU
         if: env.create == '1'
         run: |
-          case ${{ matrix.binaries }} in
-            glibc)
-              echo "Pass ..."
-              ;;
-            musl)
-              docker run --rm --privileged ghcr.io/loong64/qemu-user-static --reset -p yes
-              ;;
-          esac
+          docker run --rm --privileged ghcr.io/loong64/qemu-user-static --reset -p yes
 
       - name: Cache node.js
         if: env.create == '1'

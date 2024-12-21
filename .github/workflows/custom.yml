@@ -42,10 +42,6 @@ jobs:
         run: |
           case ${{ matrix.binaries }} in
             glibc)
-              if [ "${{ env.major_version }}" -gt "20" ]; then
-                # https://github.com/nodejs/node/pull/52888
-                exit 0
-              fi
               gh release view ${{ env.version }} -R ${{ github.repository }} | grep node-${{ env.version }}-linux-loong64.tar.xz >/dev/null 2>&1 || echo "create=1" >> $GITHUB_ENV
               ;;
             musl)
@@ -65,7 +61,7 @@ jobs:
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git tag ${{ env.version }}
+          git tag ${{ env.version }} || true
           git push origin ${{ env.version }} --force
         working-directory: main
 
@@ -81,14 +77,7 @@ jobs:
       - name: Setup QEMU
         if: env.create == '1'
         run: |
-          case ${{ matrix.binaries }} in
-            glibc)
-              echo "Pass ..."
-              ;;
-            musl)
-              docker run --rm --privileged ghcr.io/loong64/qemu-user-static --reset -p yes
-              ;;
-          esac
+          docker run --rm --privileged ghcr.io/loong64/qemu-user-static --reset -p yes
 
       - name: Cache node.js
         if: env.create == '1'
