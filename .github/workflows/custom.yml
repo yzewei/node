@@ -23,7 +23,6 @@ jobs:
     runs-on: ubuntu-latest
     env:
       version: ${{ github.event.inputs.version }}
-      use_cache: ${{ github.event.inputs.use_cache }}
       latest_version: ${{ github.event.inputs.latest_version }}
     strategy:
       matrix:
@@ -83,30 +82,20 @@ jobs:
         run: |
           docker run --rm --privileged ghcr.io/loong64/qemu-user-static --reset -p yes
 
-      - name: Cache node.js
+      - name: Restore Cache
         if: env.create == '1'
-        uses: actions/cache@v4
+        id: cache-restore
+        uses: actions/cache/restore@v4
         with:
           path: ${{ github.workspace }}/workdir/.ccache
-          key: ${{ matrix.name }}-${{ matrix.binaries }}-v${{ env.major_version }}-${{ github.sha }}
-          restore-keys: |
-            ${{ matrix.name }}-${{ matrix.binaries }}-v${{ env.major_version }}-
+          key: ${{ matrix.name }}-${{ matrix.binaries }}-v${{ env.major_version }}-
 
       - name: Set Cache
-        if: env.use_cache == 'true'
+        if: env.create == '1'
         run: |
           mkdir -p ${{ github.workspace }}/workdir/staging
           sudo chmod -R 777 ${{ github.workspace }}/workdir/staging
           sudo chown -R 1000:docker ${{ github.workspace }}/workdir/staging
-          case ${{ matrix.binaries }} in
-            glibc)
-              echo "Pass ..."
-              ;;
-            musl)
-              wget https://www.wuxiaobai.win/download/node-cache-${{ env.version }}-linux-loong64-musl.tar.gz
-              tar -pxf node-cache-${{ env.version }}-linux-loong64-musl.tar.gz -C ${{ github.workspace }}/workdir
-              ;;
-          esac
 
       - name: Build node.js
         if: env.create == '1'
@@ -126,6 +115,14 @@ jobs:
               ;;
           esac
         working-directory: unofficial-builds
+
+      - name: Save Cache
+        if: always() && env.create == '1'
+        id: cache-save
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ github.workspace }}/workdir/.ccache
+          key: ${{ matrix.name }}-${{ matrix.binaries }}-v${{ env.major_version }}-${{ github.run_id }}
 
       - name: Create release
         if: env.create == '1'
