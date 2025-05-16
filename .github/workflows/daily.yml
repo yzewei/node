@@ -60,11 +60,8 @@ jobs:
       - uses: actions/checkout@v4
         if: env.create == '1'
         with:
-          repository: loong64/unofficial-builds
+          repository: loong64/node-unofficial-builds
           path: unofficial-builds
-
-      - uses: docker/setup-qemu-action@v3
-        if: env.create == '1'
 
       - uses: docker/setup-buildx-action@v3
         if: env.create == '1'
