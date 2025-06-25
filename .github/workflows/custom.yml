@@ -6,9 +6,9 @@ on:
       version:
         description: 'Node.js version'
         required: true
-        default: 'v22.9.0'
+        default: 'v24.3.0'
       use_cache:
-        description: 'Use cache'
+        description: 'Cache'
         type: boolean
         required: true
         default: false
