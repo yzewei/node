@@ -1,0 +1,139 @@
+name: Node.js daily update build
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: 0 0 * * *
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      versions: ${{ steps.set-versions.outputs.versions }}
+    steps:
+      - name: Get latest patch versions of 20, 22, 23, 24
+        id: set-versions
+        run: |
+          majors=(20 22 23 24)
+          out="["
+          for m in "${majors[@]}"; do
+            v=$(curl -s https://nodejs.org/download/release/index.json | \
+              jq -r --arg m "$m" '.[] | select(.version | test("^v"+$m+"\\.")) | .version' | \
+              sort -Vr | head -n 1)
+            out="$out\"$v\","
+          done
+          out="${out%,}]"
+          echo "versions=$out" >> $GITHUB_OUTPUT
+
+  build-daily:
+    needs: prepare
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        name: ['node']
+        binaries: ['glibc', 'musl']
+        version: ${{ fromJson(needs.prepare.outputs.versions) }}
+        latest_version: ['24']
+
+    steps:
+      - name: Set up version info
+        run: |
+          version=${{ matrix.version }}
+          echo "version=${version}" >> $GITHUB_ENV
+          echo "Node.js current version: ${version}"
+          major_version=$(echo $version | sed 's/^v//; s/\..*//')
+          echo "major_version=${major_version}" >> $GITHUB_ENV
+
+      - name: Check release
+        run: |
+          case ${{ matrix.binaries }} in
+            glibc)
+              gh release view ${{ env.version }} -R ${{ github.repository }} | grep node-${{ env.version }}-linux-loong64.tar.xz >/dev/null 2>&1 || echo "create=1" >> $GITHUB_ENV
+              ;;
+            musl)
+              gh release view ${{ env.version }} -R ${{ github.repository }} | grep node-${{ env.version }}-linux-loong64-musl.tar.xz >/dev/null 2>&1 || echo "create=1" >> $GITHUB_ENV
+              ;;
+          esac
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/checkout@v4
+        if: env.create == '1'
+        with:
+          path: main
+
+      - name: Create tag
+        if: env.create == '1'
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git tag ${{ env.version }} || true
+          git push origin ${{ env.version }} || true
+        working-directory: main
+
+      - uses: actions/checkout@v4
+        if: env.create == '1'
+        with:
+          repository: loong64/node-unofficial-builds
+          path: unofficial-builds
+
+      - uses: docker/setup-buildx-action@v3
+        if: env.create == '1'
+
+      - name: Restore Cache
+        if: env.create == '1'
+        id: cache-restore
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ github.workspace }}/workdir/.ccache
+          key: ${{ matrix.name }}-${{ matrix.binaries }}-v${{ env.major_version }}-
+
+      - name: Set permissions
+        if: env.create == '1'
+        run: |
+          mkdir -p ${{ github.workspace }}/workdir/staging
+          sudo chmod -R 777 ${{ github.workspace }}/workdir/staging
+          sudo chown -R 1000:docker ${{ github.workspace }}/workdir/staging
+
+      - name: Build node.js
+        if: env.create == '1'
+        run: |
+          case ${{ matrix.binaries }} in
+            glibc)
+              ./bin/local_build.sh -r loong64 -v ${{ env.version }} -w ${{ github.workspace }}/workdir
+              cd ${{ github.workspace }}/workdir/staging/release/${{ env.version }}
+              sha256sum node-${{ env.version }}-linux-loong64.tar.gz > node-${{ env.version }}-linux-loong64.tar.gz.sha256
+              sha256sum node-${{ env.version }}-linux-loong64.tar.xz > node-${{ env.version }}-linux-loong64.tar.xz.sha256
+              ;;
+            musl)
+              ./bin/local_build.sh -r musl -v ${{ env.version }} -w ${{ github.workspace }}/workdir
+              cd ${{ github.workspace }}/workdir/staging/release/${{ env.version }}
+              sha256sum node-${{ env.version }}-linux-loong64-musl.tar.gz > node-${{ env.version }}-linux-loong64-musl.tar.gz.sha256
+              sha256sum node-${{ env.version }}-linux-loong64-musl.tar.xz > node-${{ env.version }}-linux-loong64-musl.tar.xz.sha256
+              ;;
+          esac
+        working-directory: unofficial-builds
+
+      - name: Save Cache
+        if: always() && env.create == '1'
+        id: cache-save
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ github.workspace }}/workdir/.ccache
+          key: ${{ matrix.name }}-${{ matrix.binaries }}-v${{ env.major_version }}-${{ github.run_id }}
+
+      - name: Create release
+        if: env.create == '1'
+        run: |
+          latestFlag=""
+          majorVersion=$(echo ${{ env.version }} | cut -d . -f 1 | tr --delete v)
+          if [ "${majorVersion}" != "${{ matrix.latest_version }}" ]; then
+            latestFlag="--latest=false"
+          fi
+          gh release create ${{ env.version }} -R ${{ github.repository }} --title ${{ env.version }} --notes "**Full Changelog**: [${{ env.version }}](https://github.com/nodejs/node/releases/tag/${{ env.version }})" ${latestFlag} || true
+          gh release upload ${{ env.version }} -R ${{ github.repository }} ${{ github.workspace }}/workdir/staging/src/${{ env.version }}/* || true
+          gh release upload ${{ env.version }} -R ${{ github.repository }} ${{ github.workspace }}/workdir/staging/release/${{ env.version }}/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
